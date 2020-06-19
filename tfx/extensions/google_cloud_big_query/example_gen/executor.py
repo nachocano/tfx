@@ -22,12 +22,11 @@ from typing import Any, Dict, Optional, Text
 
 import apache_beam as beam
 
-from apache_beam.io.gcp.bigquery import ReadFromBigQuery
 from apache_beam.options import value_provider
 import tensorflow as tf
 
 from tfx.components.example_gen import base_example_gen_executor
-from tfx.utils import telemetry_utils
+from tfx.extensions.google_cloud_big_query import utils
 from google.cloud import bigquery
 
 
@@ -79,39 +78,6 @@ class _BigQueryConverter(object):
     return tf.train.Example(features=tf.train.Features(feature=feature))
 
 
-# Create this instead of inline in _BigQueryToExample for test mocking purpose.
-@beam.ptransform_fn
-@beam.typehints.with_input_types(beam.Pipeline)
-@beam.typehints.with_output_types(beam.typehints.Dict[Text, Any])
-def _ReadFromBigQueryImpl(  # pylint: disable=invalid-name
-    pipeline: beam.Pipeline,
-    query: Text,
-    use_bigquery_source: bool = False) -> beam.pvalue.PCollection:
-  """Read from BigQuery.
-
-  Args:
-    pipeline: beam pipeline.
-    query: a BigQuery sql string.
-    use_bigquery_source: Whether to use BigQuerySource instead of experimental
-      `ReadFromBigQuery` PTransform.
-
-  Returns:
-    PCollection of dict.
-  """
-  # TODO(b/155441037): Consolidate to ReadFromBigQuery once its performance
-  # on dataflow runner is on par with BigQuerySource.
-  if use_bigquery_source:
-    return (pipeline
-            | 'ReadFromBigQuerySource' >> beam.io.Read(
-                beam.io.BigQuerySource(query=query, use_standard_sql=True)))
-
-  return (pipeline
-          | 'ReadFromBigQuery' >> ReadFromBigQuery(
-              query=query,
-              use_standard_sql=True,
-              bigquery_job_labels=telemetry_utils.get_labels_dict()))
-
-
 @beam.ptransform_fn
 @beam.typehints.with_input_types(beam.Pipeline)
 @beam.typehints.with_output_types(tf.train.Example)
@@ -148,7 +114,7 @@ def _BigQueryToExample(  # pylint: disable=invalid-name
   ]
 
   return (pipeline
-          | 'QueryTable' >> _ReadFromBigQueryImpl(  # pylint: disable=no-value-for-parameter
+          | 'QueryTable' >> utils.read_from_big_query_impl(  # pylint: disable=no-value-for-parameter
               query=split_pattern,
               use_bigquery_source=use_dataflow_runner)
           | 'ToTFExample' >> beam.Map(converter.RowToExample))

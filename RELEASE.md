@@ -283,6 +283,8 @@
     Channel of external artifact:
     *   `input` Channel is deprecated. The use of `input` is valid but
         should change to string type `input_base` ASAP.
+*   Added BigQueryToElwcExampleGen to take a query as input to generate
+    ELWC(ExampleListAsContext) examples.
 
 ## Documentation updates
 * N/A
