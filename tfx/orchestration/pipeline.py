@@ -22,7 +22,7 @@ from __future__ import unicode_literals
 import collections
 import json
 import os
-from typing import List, Optional, Text, cast
+from typing import List, Optional, Text, cast, Union
 
 from tfx.dsl.components.base import base_node
 from tfx.dsl.components.base import executor_spec
@@ -31,6 +31,7 @@ from tfx.proto.orchestration import pipeline_pb2
 from tfx.utils import topsort
 
 from google.protobuf import message
+from ml_metadata.google.services.mlmd_service.proto import mlmd_service_pb2
 from ml_metadata.proto import metadata_store_pb2
 
 # Argo's workflow name cannot exceed 63 chars:
@@ -55,6 +56,13 @@ _PIPELINE_ROOT = 'pipeline-root'
 #                 str(pipeline.ROOT_PARAMETER), 'model_serving'))))
 ROOT_PARAMETER = data_types.RuntimeParameter(name=_PIPELINE_ROOT, ptype=Text)
 
+# pyformat: disable
+_ConnectionConfigType = Union[
+    metadata_store_pb2.ConnectionConfig,
+    metadata_store_pb2.MetadataStoreClientConfig,
+    mlmd_service_pb2.MLMDServiceClientConfig]
+# pyformat: enable
+
 
 class Pipeline(object):
   """Logical TFX pipeline object.
@@ -77,16 +85,16 @@ class Pipeline(object):
     additional_pipeline_args: Other pipeline args.
   """
 
-  def __init__(self,
-               pipeline_name: Text,
-               pipeline_root: Text,
-               metadata_connection_config: Optional[
-                   metadata_store_pb2.ConnectionConfig] = None,
-               components: Optional[List[base_node.BaseNode]] = None,
-               enable_cache: Optional[bool] = False,
-               beam_pipeline_args: Optional[List[Text]] = None,
-               platform_config: Optional[message.Message] = None,
-               **kwargs):
+  def __init__(
+      self,
+      pipeline_name: Text,
+      pipeline_root: Text,
+      metadata_connection_config: Optional[_ConnectionConfigType] = None,
+      components: Optional[List[base_node.BaseNode]] = None,
+      enable_cache: Optional[bool] = False,
+      beam_pipeline_args: Optional[List[Text]] = None,
+      platform_config: Optional[message.Message] = None,
+      **kwargs):
     """Initialize pipeline.
 
     Args:
