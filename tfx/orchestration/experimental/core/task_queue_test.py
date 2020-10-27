@@ -34,7 +34,7 @@ class TaskQueueTest(tu.TfxTest):
     t1 = _test_task(node_id='trainer', pipeline_id='my_pipeline')
     t2 = _test_task(
         node_id='transform', pipeline_id='my_pipeline', pipeline_run_id='run_0')
-    tq = task_queue.TaskQueue()
+    tq = task_queue.TaskQueue('test-queue')
 
     # Enqueueing new tasks is successful.
     self.assertTrue(tq.enqueue(t1))
@@ -48,6 +48,7 @@ class TaskQueueTest(tu.TfxTest):
     self.assertEqual(t1, tq.dequeue())
     self.assertEqual(t2, tq.dequeue())
     self.assertIsNone(tq.dequeue())
+    self.assertIsNone(tq.dequeue(0.1))
 
     # Re-enqueueing the same tasks fails as `task_done` has not been called.
     self.assertFalse(tq.enqueue(t1))
@@ -64,7 +65,7 @@ class TaskQueueTest(tu.TfxTest):
     t1 = _test_task(node_id='trainer', pipeline_id='my_pipeline')
     t2 = _test_task(
         node_id='transform', pipeline_id='my_pipeline', pipeline_run_id='run_0')
-    tq = task_queue.TaskQueue()
+    tq = task_queue.TaskQueue('test-queue')
 
     # Enqueue t1, but calling `task_done` raises error since t1 is not dequeued.
     self.assertTrue(tq.enqueue(t1))
@@ -76,7 +77,7 @@ class TaskQueueTest(tu.TfxTest):
     tq.task_done(t1)
 
     # Error since t2 is not in the queue.
-    with self.assertRaisesRegexp(RuntimeError, 'Task not tracked'):
+    with self.assertRaisesRegexp(RuntimeError, 'Item not present'):
       tq.task_done(t2)
 
 

@@ -64,7 +64,7 @@ class SyncPipelineTaskGeneratorTest(tu.TfxTest, parameterized.TestCase):
     self._transform = pipeline.nodes[1].pipeline_node
     self._trainer = pipeline.nodes[2].pipeline_node
 
-    self._task_queue = tq.TaskQueue()
+    self._task_queue = tq.TaskQueue('test-queue')
 
   def _verify_node_execution_task(self, node, execution_id, task):
     self.assertEqual(node.node_info.id, task.exec_task.node_id)
@@ -90,9 +90,9 @@ class SyncPipelineTaskGeneratorTest(tu.TfxTest, parameterized.TestCase):
     self.assertLen(
         executions, num_initial_executions,
         'Expected {} execution(s) in MLMD.'.format(num_initial_executions))
-    task_gen = sptg.SyncPipelineTaskGenerator(
-        self._mlmd_connection, self._pipeline,
-        self._task_queue.is_task_id_tracked)
+    task_gen = sptg.SyncPipelineTaskGenerator(self._mlmd_connection,
+                                              self._pipeline,
+                                              self._task_queue.is_key_present)
     tasks = task_gen.generate()
     self.assertLen(
         tasks, num_tasks_generated,

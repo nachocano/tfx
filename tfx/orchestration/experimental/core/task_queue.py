@@ -13,9 +13,9 @@
 # limitations under the License.
 """Task queue."""
 
-import collections
+import queue
 import threading
-from typing import Optional, Text, Type, TypeVar
+from typing import Callable, Generic, Optional, Text, Type, TypeVar
 
 import attr
 from tfx.orchestration.experimental.core.proto import task_pb2
@@ -81,93 +81,122 @@ class TaskId:
     return cls(exec_task_id=_ExecTaskId.from_pipeline_node(pipeline, node))
 
 
-class TaskQueue:
-  """A thread-safe task queue.
+ItemType = TypeVar('ItemType')
+KeyType = TypeVar('KeyType')
 
-  The life-cycle of a task starts with producers calling `enqueue`. Consumers
+
+class _Queue(Generic[ItemType, KeyType]):
+  """A thread-safe queue that supports duplicate detection.
+
+  The life-cycle of an item starts with producers calling `enqueue`. Consumers
   call `dequeue` to obtain the tasks in FIFO order. When processing is complete,
   consumers must release the tasks by calling `task_done`.
   """
 
-  def __init__(self):
+  def __init__(self, name: Text, key_fn: Callable[[KeyType], ItemType]):
+    self.name = name
+    self._key_fn = key_fn
     self._lock = threading.Lock()
-    self._task_ids = set()
-    self._task_queue = collections.deque()
-    self._pending_tasks_by_id = {}
+    self._keys = set()
+    self._queue = queue.Queue()  # replace with `queue.SimpleQueue` in Py3.7+.
+    self._pending_items_by_key = {}
 
-  def enqueue(self, task: task_pb2.Task) -> bool:
-    """Enqueues the given task if no prior task with the same id exists.
+  def enqueue(self, item: ItemType) -> bool:
+    """Enqueues the given item if no item having the same key exists.
 
     Args:
-      task: A `Task` proto.
+      item: An item.
 
     Returns:
-      `True` if the task could be enqueued. `False` if a task with the same id
+      `True` if the item could be enqueued. `False` if an item with the same key
       already exists.
     """
     with self._lock:
-      task_id = TaskId.from_task(task)
-      if task_id in self._task_ids:
+      key = self._key_fn(item)
+      if key in self._keys:
         return False
-      self._task_ids.add(task_id)
-      self._task_queue.append((task_id, task))
+      self._keys.add(key)
+      self._queue.put((key, item))
       return True
 
-  def dequeue(self) -> Optional[task_pb2.Task]:
-    """Removes and returns a task from the queue.
+  def dequeue(self,
+              max_wait_secs: Optional[float] = None) -> Optional[ItemType]:
+    """Removes and returns an item from the queue.
 
     Once the processing is complete, queue consumers must call `task_done`.
 
+    Args:
+      max_wait_secs: If not `None`, waits a maximum of `max_wait_secs` when the
+        queue is empty for an item to be enqueued. If no item is present in the
+        queue after the wait, `None` is returned. If `max_wait_secs` is `None`
+        (default), returns `None` without waiting when the queue is empty.
+
     Returns:
-      A `Task` or `None` if the queue is empty.
+      An item or `None` if the queue is empty.
     """
     with self._lock:
-      if not self._task_queue:
+      try:
+        key, item = self._queue.get(
+            block=max_wait_secs is not None, timeout=max_wait_secs)
+      except queue.Empty:
         return None
-      task_id, task = self._task_queue.popleft()
-      self._pending_tasks_by_id[task_id] = task
-      return task
+      self._pending_items_by_key[key] = item
+      return item
 
-  def task_done(self, task: task_pb2.Task) -> None:
-    """Marks a task as done.
+  def task_done(self, item: ItemType) -> None:
+    """Marks the processing of an item as done.
 
     Consumers should call this method after the task is processed.
 
     Args:
-      task: A `Task` proto.
+      item: An item.
 
     Raises:
       RuntimeError: If attempt is made to mark a non-existent or non-dequeued
-      task as done.
+      item as done.
     """
     with self._lock:
-      task_id = TaskId.from_task(task)
-      if task_id not in self._pending_tasks_by_id:
-        if task_id in self._task_ids:
+      key = self._key_fn(item)
+      if key not in self._pending_items_by_key:
+        if key in self._keys:
           raise RuntimeError(
-              'Must call `dequeue` before calling `task_done`; task: {}'.format(
-                  task))
+              'Must call `dequeue` before calling `task_done`; item key: {}'
+              .format(key))
         else:
           raise RuntimeError(
-              'Task not tracked by task queue; task: {}'.format(task))
-      self._pending_tasks_by_id.pop(task_id)
-      self._task_ids.remove(task_id)
+              'Item not present in the queue; item key: {}'.format(key))
+      self._pending_items_by_key.pop(key)
+      self._keys.remove(key)
 
-  def is_task_id_tracked(self, task_id: TaskId) -> bool:
-    """Returns `True` if a task with given `task_id` is tracked.
+  def is_key_present(self, key: KeyType) -> bool:
+    """Returns `True` if an item with the given key is present in the queue.
 
-    The task is considered "tracked" if it has been `enqueue`d, probably
+    The task is considered present if it has been `enqueue`d, probably
     `dequeue`d but `task_done` has not been called.
 
     Args:
-      task_id: An instance of `TaskId` representing the task to be checked.
+      key: The item key.
 
     Returns:
-      `True` if task with given `task_id` is tracked.
+      `True` if an item with the given key is present.
     """
     with self._lock:
-      return task_id in self._task_ids
+      return key in self._keys
 
   def is_empty(self) -> bool:
-    """Returns `True` if the task queue is empty."""
-    return not self._task_ids
+    """Returns `True` if the queue is empty."""
+    return not self._keys
+
+
+class TaskQueue(_Queue[task_pb2.Task, TaskId]):
+  """A `_Queue` for task protos."""
+
+  def __init__(self, name):
+    super(TaskQueue, self).__init__(name, TaskId.from_task)
+
+
+class TaskIdQueue(_Queue[TaskId, TaskId]):
+  """A `_Queue` for task ids."""
+
+  def __init__(self, name):
+    super(TaskIdQueue, self).__init__(name, lambda x: x)
